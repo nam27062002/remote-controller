@@ -13,8 +13,11 @@ class PS5ControllerTester:
         self.base_height = 664
         self.width = width
         self.height = height
-        self.scale_x = width / self.base_width
-        self.scale_y = height / self.base_height
+
+        # Scale down the controller but keep good quality
+        self.controller_scale = 0.8  # Increase to 80% for better quality
+        self.scale_x = (width / self.base_width) * self.controller_scale
+        self.scale_y = (height / self.base_height) * self.controller_scale
 
         self.screen = pygame.display.set_mode((width, height))
         pygame.display.set_caption("PS5 Controller Tester")
@@ -31,22 +34,44 @@ class PS5ControllerTester:
 
         # Visual feedback colors
         self.normal_color = (255, 255, 255)
-        self.pressed_color = (100, 200, 255)
-        self.highlight_color = (255, 255, 0)
+        self.pressed_color = (0, 150, 255)  # Brighter blue for better visibility
+        self.trigger_color = (100, 255, 100)  # Green for triggers
+        self.joystick_pressed_color = (255, 100, 100)  # Red for joystick press
+        self.circle_color = (100, 200, 255, 100)  # Light blue for joystick circle
 
         # Joystick positions (for visual feedback)
         self.left_stick_pos = [0, 0]
         self.right_stick_pos = [0, 0]
+        self.left_stick_moved = False
+        self.right_stick_moved = False
+        self.left_stick_move_timer = 0
+        self.right_stick_move_timer = 0
+
+        # Joystick properties (based on your image size 161x161)
+        self.joystick_size = 161
+        self.joystick_radius = self.joystick_size / 2
+
+        # Store centers for trigonometric circles
+        self.left_joystick_center = None
+        self.right_joystick_center = None
+
+        # L1/R1 dimensions (131x47) - KHỞI TẠO TRƯỚC KHI GỌI define_positions
+        self.l1_size = (131, 47)
+        self.r1_size = (131, 47)
 
         # Load assets and define positions
         self.load_assets()
         self.define_positions()
 
-        # Font for text display
+        # Font for text display (kept for debugging, but won't be shown)
         self.font = pygame.font.Font(None, 24)
         self.small_font = pygame.font.Font(None, 18)
 
         self.clock = pygame.time.Clock()
+
+        # Calculate controller offset to center it
+        self.controller_offset_x = (width - (self.base_width * self.controller_scale)) // 2
+        self.controller_offset_y = (height - (self.base_height * self.controller_scale)) // 2
 
     def check_controller(self):
         """Check for connected controllers"""
@@ -58,16 +83,14 @@ class PS5ControllerTester:
             self.joystick.init()
             self.controller_connected = True
             print(f"Controller connected: {self.joystick.get_name()}")
-            print(f"Buttons: {self.joystick.get_numbuttons()}")
-            print(f"Axes: {self.joystick.get_numaxes()}")
-            print(f"Hats: {self.joystick.get_numhats()}")
+            print(f"Total buttons: {self.joystick.get_numbuttons()}")
         else:
             self.controller_connected = False
             self.joystick = None
             print("No controller connected")
 
     def load_assets(self):
-        """Load all image assets"""
+        """Load all image assets with better quality handling"""
         asset_files = {
             'icon': 'assets/icon.png',
             'center_pad': 'assets/center-pad.png',
@@ -81,7 +104,6 @@ class PS5ControllerTester:
             'voice_button_highlight': 'assets/voice_button_highlight.png',
             'icon_mute': 'assets/icon-mute.png',
             'loudspeaker': 'assets/loudspeaker.png',
-            'right_button': 'assets/right_button.png',
             'button_circle': 'assets/button-circle.png',
             'button_cross': 'assets/button-cross.png',
             'button_square': 'assets/button-square.png',
@@ -105,18 +127,22 @@ class PS5ControllerTester:
             'left_icon': 'assets/left_icon.png',
             'right_icon': 'assets/right_icon.png',
             'share_button': 'assets/share_button.png',
-            'option_button': 'assets/option_button.png'
+            'option_button': 'assets/option_button.png',
+            'l2': 'assets/L2.png',  # Thêm hình L2
+            'r2': 'assets/R2.png',  # Thêm hình R2
         }
 
         self.assets = {}
         for name, path in asset_files.items():
             try:
-                self.assets[name] = pygame.image.load(path)
+                original_surface = pygame.image.load(path)
+                # Convert to the best pixel format for faster blitting
+                self.assets[name] = original_surface.convert_alpha()
             except pygame.error as e:
                 print(f"Could not load {path}: {e}")
                 # Create a placeholder surface
-                self.assets[name] = pygame.Surface((50, 50))
-                self.assets[name].fill((255, 0, 255))  # Magenta placeholder
+                self.assets[name] = pygame.Surface((50, 50), pygame.SRCALPHA)
+                self.assets[name].fill((255, 0, 255, 128))  # Semi-transparent magenta
 
         # Set icon
         if 'icon' in self.assets:
@@ -132,17 +158,11 @@ class PS5ControllerTester:
             'right_side': (676.97, 33.09),
             'blue_highlight_right': (500, 44),
 
-            # Right buttons (Cross, Square, Circle, Triangle)
-            'right_button_cross': (768, 232.97),
-            'right_button_square': (697.38, 161.89),
-            'right_button_circle': (838.93, 161.89),
-            'right_button_triangle': (768, 91),
-
-            # Button symbols
-            'button_cross': (773.57, 238.54),
-            'button_square': (702.94, 167.46),
-            'button_circle': (844.5, 167.46),
-            'button_triangle': (773.57, 96.57),
+            # Right buttons symbols
+            'button_cross': (768, 232.97),
+            'button_square': (697.38, 161.89),
+            'button_circle': (838.93, 161.89),
+            'button_triangle': (768, 91),
 
             'right_joystick': (591.47, 264),
             'right_icon': (723, 49),
@@ -176,8 +196,18 @@ class PS5ControllerTester:
             'voice_button_highlight': (475.6, 371),
             'voice_button': (477.6, 373),
             'icon_mute': (495.04, 397.61),
-            'loudspeaker': (491.5, 418.27)
+            'loudspeaker': (491.5, 418.27),
         }
+
+        # Calculate trigger positions based on R1/L1 positions and sizes
+        # R1 position: (735.17, 11.29), size: (131, 47)
+        # L1 position: (134.84, 11.29), size: (131, 47)
+        r1_center_x = self.positions['r1'][0] + self.r1_size[0] / 2
+        l1_center_x = self.positions['l1'][0] + self.l1_size[0] / 2
+
+        # Position triggers above the shoulder buttons
+        self.positions['r2'] = (r1_center_x - 50, -70)  # Center with offset for 100x100 image
+        self.positions['l2'] = (l1_center_x - 50, -70)  # Center with offset for 100x100 image
 
         # Button mapping for PS5 controller
         self.button_mapping = {
@@ -196,6 +226,7 @@ class PS5ControllerTester:
             12: 'dpad_down',  # D-pad down
             13: 'dpad_left',  # D-pad left
             14: 'dpad_right',  # D-pad right
+            15: 'touchpad',  # Touchpad button
         }
 
         # Axis mapping
@@ -205,13 +236,17 @@ class PS5ControllerTester:
             2: 'right_stick_x',
             3: 'right_stick_y',
             4: 'l2',  # Left trigger
-            5: 'r2',  # Right trigger
+            5: 'r2',  # Right trigger,
         }
 
     def update_controller_input(self):
         """Update controller input states"""
         if not self.controller_connected or not self.joystick:
             return
+
+        # Track joystick movement
+        prev_left_stick = self.left_stick_pos.copy()
+        prev_right_stick = self.right_stick_pos.copy()
 
         # Update button states
         for i in range(self.joystick.get_numbuttons()):
@@ -226,24 +261,39 @@ class PS5ControllerTester:
 
             # Update joystick positions for visual feedback
             if axis_name == 'left_stick_x':
-                self.left_stick_pos[0] = value * 20  # Scale for visual movement
+                self.left_stick_pos[0] = value * 40  # Increased movement range for better visualization
             elif axis_name == 'left_stick_y':
-                self.left_stick_pos[1] = value * 20
+                self.left_stick_pos[1] = value * 40
             elif axis_name == 'right_stick_x':
-                self.right_stick_pos[0] = value * 20
+                self.right_stick_pos[0] = value * 40
             elif axis_name == 'right_stick_y':
-                self.right_stick_pos[1] = value * 20
+                self.right_stick_pos[1] = value * 40
+
+        # Check if joysticks moved
+        left_moved = (abs(self.left_stick_pos[0] - prev_left_stick[0]) > 0.1 or
+                      abs(self.left_stick_pos[1] - prev_left_stick[1]) > 0.1)
+        right_moved = (abs(self.right_stick_pos[0] - prev_right_stick[0]) > 0.1 or
+                       abs(self.right_stick_pos[1] - prev_right_stick[1]) > 0.1)
+
+        if left_moved:
+            self.left_stick_moved = True
+            self.left_stick_move_timer = 10  # Show circle for 10 frames
+        if right_moved:
+            self.right_stick_moved = True
+            self.right_stick_move_timer = 10  # Show circle for 10 frames
 
         # Update hat (D-pad) values
         for i in range(self.joystick.get_numhats()):
             self.hat_values[f'hat_{i}'] = self.joystick.get_hat(i)
 
     def scale_position(self, pos):
-        """Scale position based on current resolution"""
-        return (int(pos[0] * self.scale_x), int(pos[1] * self.scale_y))
+        """Scale position based on current resolution and add offset for centering"""
+        scaled_x = int(pos[0] * self.scale_x) + self.controller_offset_x
+        scaled_y = int(pos[1] * self.scale_y) + self.controller_offset_y
+        return (scaled_x, scaled_y)
 
     def scale_surface(self, surface, scale_factor=1.0):
-        """Scale surface based on current resolution"""
+        """Scale surface based on current resolution with better quality"""
         if surface is None:
             return None
 
@@ -256,7 +306,8 @@ class PS5ControllerTester:
         if new_size[0] <= 0 or new_size[1] <= 0:
             return surface
 
-        return pygame.transform.scale(surface, new_size)
+        # Use smoothscale for better quality when scaling down
+        return pygame.transform.smoothscale(surface, new_size)
 
     def blit_scaled(self, asset_name, position_key, scale_factor=1.0, color_tint=None):
         """Blit an asset at a scaled position with scaled size and optional color tint"""
@@ -267,70 +318,190 @@ class PS5ControllerTester:
             # Apply color tint if specified
             if color_tint:
                 tinted_surface = scaled_surface.copy()
-                tinted_surface.fill(color_tint, special_flags=pygame.BLEND_ADD)
+                # Create a colored overlay
+                overlay = pygame.Surface(tinted_surface.get_size())
+                overlay.fill(color_tint)
+                overlay.set_alpha(128)  # Semi-transparent
+                tinted_surface.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
                 self.screen.blit(tinted_surface, scaled_pos)
             else:
                 self.screen.blit(scaled_surface, scaled_pos)
 
-    def draw_button_with_state(self, button_asset, symbol_asset, button_pos, symbol_pos, button_name):
-        """Draw button with visual feedback based on state"""
+    def draw_symbol_button(self, asset_name, position_key, button_name):
+        """Draw a symbol button with visual feedback based on state"""
         is_pressed = self.button_states.get(button_name, False)
         color_tint = self.pressed_color if is_pressed else None
-
-        # Draw button background
-        self.blit_scaled(button_asset, button_pos, color_tint=color_tint)
-        # Draw button symbol
-        self.blit_scaled(symbol_asset, symbol_pos, color_tint=color_tint)
+        self.blit_scaled(asset_name, position_key, color_tint=color_tint)
 
     def draw_dpad_with_state(self):
         """Draw D-pad with visual feedback"""
-        dpad_buttons = [
-            ('dpad_up', 'dpad_up', 'dpad_up'),
-            ('dpad_down', 'dpad_down', 'dpad_down'),
-            ('dpad_left', 'dpad_left', 'dpad_left'),
-            ('dpad_right', 'dpad_right', 'dpad_right')
-        ]
+        # Draw D-pad symbols with state
+        self.draw_symbol_button('dpad_up', 'dpad_up', 'dpad_up')
+        self.draw_symbol_button('dpad_down', 'dpad_down', 'dpad_down')
+        self.draw_symbol_button('dpad_left', 'dpad_left', 'dpad_left')
+        self.draw_symbol_button('dpad_right', 'dpad_right', 'dpad_right')
 
-        for asset_name, pos_key, button_name in dpad_buttons:
-            is_pressed = self.button_states.get(button_name, False)
-            color_tint = self.pressed_color if is_pressed else None
-            self.blit_scaled(asset_name, pos_key, color_tint=color_tint)
+    def draw_right_buttons(self):
+        """Draw right buttons (cross, circle, square, triangle) with visual feedback"""
+        self.draw_symbol_button('button_cross', 'button_cross', 'cross')
+        self.draw_symbol_button('button_square', 'button_square', 'square')
+        self.draw_symbol_button('button_circle', 'button_circle', 'circle')
+        self.draw_symbol_button('button_triangle', 'button_triangle', 'triangle')
 
-    def draw_joystick_with_movement(self, asset_name, base_pos_key, stick_offset):
-        """Draw joystick with movement based on input"""
+    def draw_joystick_with_movement(self, asset_name, base_pos_key, stick_offset, stick_button, is_left=False):
+        """Draw joystick with movement and press feedback"""
         base_pos = self.scale_position(self.positions[base_pos_key])
         offset_x = int(stick_offset[0] * self.scale_x)
         offset_y = int(stick_offset[1] * self.scale_y)
 
-        moved_pos = (base_pos[0] + offset_x, base_pos[1] + offset_y)
+        # Calculate the actual center of the joystick base
+        center_x = base_pos[0] + int(self.joystick_radius * self.scale_x)
+        center_y = base_pos[1] + int(self.joystick_radius * self.scale_y)
 
+        # Store center for later use in trigonometric circle
+        if is_left:
+            self.left_joystick_center = (center_x, center_y)
+        else:
+            self.right_joystick_center = (center_x, center_y)
+
+        # Calculate the moved position relative to the center
+        moved_pos = (center_x + offset_x - int(self.joystick_radius * self.scale_x),
+                     center_y + offset_y - int(self.joystick_radius * self.scale_y))
+
+        # Draw joystick
         scaled_surface = self.scale_surface(self.assets[asset_name])
-        self.screen.blit(scaled_surface, moved_pos)
+
+        # Check if joystick is pressed (L3 or R3)
+        is_pressed = self.button_states.get(stick_button, False)
+
+        if is_pressed:
+            # Apply red tint when pressed
+            tinted_surface = scaled_surface.copy()
+            overlay = pygame.Surface(tinted_surface.get_size())
+            overlay.fill(self.joystick_pressed_color)
+            overlay.set_alpha(128)
+            tinted_surface.blit(overlay, (0, 0), special_flags=pygame.BLEND_ADD)
+            self.screen.blit(tinted_surface, moved_pos)
+        else:
+            self.screen.blit(scaled_surface, moved_pos)
+
+        # Draw direction line
+        if math.hypot(offset_x, offset_y) > 1:
+            # Calculate line end position
+            angle = math.atan2(offset_y, offset_x)
+            line_length = min(40, math.hypot(offset_x, offset_y) * 1.5)
+            end_x = center_x + int(line_length * math.cos(angle))
+            end_y = center_y + int(line_length * math.sin(angle))
+
+            # Draw line with gradient color
+            pygame.draw.line(self.screen, (100, 200, 255), (center_x, center_y), (end_x, end_y), 3)
+
+    def draw_trigonometric_circle(self, center, offset, is_left):
+        """Draw trigonometric circle for joystick movement"""
+        if center is None:
+            return
+
+        offset_x, offset_y = offset
+
+        # Circle radius - proportional to joystick size
+        circle_radius = int(self.joystick_radius * min(self.scale_x, self.scale_y))
+
+        # Create surface for circle with alpha
+        circle_surface = pygame.Surface((circle_radius * 2, circle_radius * 2), pygame.SRCALPHA)
+
+        # Draw circle outline
+        pygame.draw.circle(circle_surface, self.circle_color, (circle_radius, circle_radius), circle_radius, 2)
+
+        # Draw center lines
+        pygame.draw.line(circle_surface, self.circle_color, (circle_radius, 0), (circle_radius, circle_radius * 2), 1)
+        pygame.draw.line(circle_surface, self.circle_color, (0, circle_radius), (circle_radius * 2, circle_radius), 1)
+
+        # Draw position indicator
+        if math.hypot(offset_x, offset_y) > 1:
+            angle = math.atan2(offset_y, offset_x)
+            indicator_x = circle_radius + int(circle_radius * 0.8 * math.cos(angle))
+            indicator_y = circle_radius + int(circle_radius * 0.8 * math.sin(angle))
+            pygame.draw.circle(circle_surface, (255, 100, 100, 200), (indicator_x, indicator_y), 5)
+
+        # Blit circle surface to screen
+        circle_pos = (center[0] - circle_radius, center[1] - circle_radius)
+        self.screen.blit(circle_surface, circle_pos)
+
+    def draw_trigger(self, position_key, trigger_name):
+        """Draw trigger using L2/R2 image with visual feedback"""
+        base_pos = self.scale_position(self.positions[position_key])
+
+        # Get trigger value (normalize from [-1, 1] to [0, 1])
+        trigger_value = self.axis_values.get(trigger_name, 0)
+        normalized_value = (trigger_value + 1) / 2
+
+        # Determine asset name
+        asset_name = 'l2' if 'l2' in trigger_name else 'r2'
+
+        # Scale and position the trigger image
+        scaled_surface = self.scale_surface(self.assets[asset_name])
+        self.screen.blit(scaled_surface, base_pos)
+
+        # Create a semi-transparent overlay for visual feedback
+        overlay = pygame.Surface((100, int(100 * normalized_value)), pygame.SRCALPHA)
+
+        # Color gradient based on pressure (green to yellow to red)
+        if normalized_value < 0.5:
+            # Green to yellow gradient
+            r = int(255 * (normalized_value * 2))
+            g = 255
+        else:
+            # Yellow to red gradient
+            r = 255
+            g = int(255 * ((1 - normalized_value) * 2))
+        b = 0
+
+        # Create gradient overlay
+        for i in range(overlay.get_height()):
+            # Calculate gradient intensity for this row
+            row_intensity = i / overlay.get_height()
+            row_color = (r, g, b, int(150 * row_intensity))
+            pygame.draw.line(overlay, row_color, (0, i), (overlay.get_width(), i))
+
+        # Position overlay at the bottom of the trigger image
+        overlay_pos = (base_pos[0], base_pos[1] + 100 - overlay.get_height())
+        self.screen.blit(overlay, overlay_pos)
 
     def draw_controller(self):
         """Draw the complete PS5 controller with input feedback"""
+        # Update joystick move timers
+        if self.left_stick_move_timer > 0:
+            self.left_stick_move_timer -= 1
+        if self.right_stick_move_timer > 0:
+            self.right_stick_move_timer -= 1
+
+        # Draw L2/R2 triggers first (so they appear behind other elements)
+        self.draw_trigger('l2', 'l2')
+        self.draw_trigger('r2', 'r2')
+
         # Right side elements
-        self.blit_scaled('r1', 'r1', color_tint=self.pressed_color if self.button_states.get('r1', False) else None)
+        r1_pressed = self.button_states.get('r1', False)
+        self.blit_scaled('r1', 'r1', color_tint=self.pressed_color if r1_pressed else None)
+
         self.blit_scaled('white_right', 'white_right')
         self.blit_scaled('black_right', 'black_right')
         self.blit_scaled('right_side', 'right_side')
         self.blit_scaled('blue_highlight_right', 'blue_highlight_right')
 
         # Right buttons with state feedback
-        self.draw_button_with_state('right_button', 'button_cross', 'right_button_cross', 'button_cross', 'cross')
-        self.draw_button_with_state('right_button', 'button_square', 'right_button_square', 'button_square', 'square')
-        self.draw_button_with_state('right_button', 'button_circle', 'right_button_circle', 'button_circle', 'circle')
-        self.draw_button_with_state('right_button', 'button_triangle', 'right_button_triangle', 'button_triangle',
-                                    'triangle')
+        self.draw_right_buttons()
 
         # Right side controls
-        self.draw_joystick_with_movement('joystick', 'right_joystick', self.right_stick_pos)
+        self.draw_joystick_with_movement('joystick', 'right_joystick', self.right_stick_pos, 'r3', is_left=False)
         self.blit_scaled('right_icon', 'right_icon')
-        self.blit_scaled('option_button', 'option_button',
-                         color_tint=self.pressed_color if self.button_states.get('option', False) else None)
+
+        option_pressed = self.button_states.get('option', False)
+        self.blit_scaled('option_button', 'option_button', color_tint=self.pressed_color if option_pressed else None)
 
         # Left side elements
-        self.blit_scaled('l1', 'l1', color_tint=self.pressed_color if self.button_states.get('l1', False) else None)
+        l1_pressed = self.button_states.get('l1', False)
+        self.blit_scaled('l1', 'l1', color_tint=self.pressed_color if l1_pressed else None)
+
         self.blit_scaled('white_left', 'white_left')
         self.blit_scaled('black_left', 'black_left')
         self.blit_scaled('left_side', 'left_side')
@@ -340,96 +511,51 @@ class PS5ControllerTester:
         self.draw_dpad_with_state()
 
         # Left side controls
-        self.draw_joystick_with_movement('joystick', 'left_joystick', self.left_stick_pos)
+        self.draw_joystick_with_movement('joystick', 'left_joystick', self.left_stick_pos, 'l3', is_left=True)
         self.blit_scaled('left_icon', 'left_icon')
-        self.blit_scaled('share_button', 'share_button',
-                         color_tint=self.pressed_color if self.button_states.get('share', False) else None)
 
-        # Center elements
-        self.blit_scaled('center_pad', 'center_pad')
+        share_pressed = self.button_states.get('share', False)
+        self.blit_scaled('share_button', 'share_button', color_tint=self.pressed_color if share_pressed else None)
+
+        # Center elements - TOUCHPAD SUPPORT ADDED HERE
+        touchpad_pressed = self.button_states.get('touchpad', False)
+        self.blit_scaled('center_pad', 'center_pad', color_tint=self.pressed_color if touchpad_pressed else None)
+
         self.blit_scaled('highlight', 'highlight')
         self.blit_scaled('speaker', 'speaker')
-        self.blit_scaled('ps_logo_under', 'ps_logo_under')
-        self.blit_scaled('ps_logo_upper', 'ps_logo_upper',
-                         color_tint=self.pressed_color if self.button_states.get('ps', False) else None)
-        self.blit_scaled('ps_logo_under_layout', 'ps_logo_under_layout')
-        self.blit_scaled('ps_logo_upper_layout', 'ps_logo_upper_layout')
+
+        # Highlight all PS logo parts when PS button is pressed
+        ps_pressed = self.button_states.get('ps', False)
+        self.blit_scaled('ps_logo_under', 'ps_logo_under', color_tint=self.pressed_color if ps_pressed else None)
+        self.blit_scaled('ps_logo_upper', 'ps_logo_upper', color_tint=self.pressed_color if ps_pressed else None)
+        self.blit_scaled('ps_logo_under_layout', 'ps_logo_under_layout',
+                         color_tint=self.pressed_color if ps_pressed else None)
+        self.blit_scaled('ps_logo_upper_layout', 'ps_logo_upper_layout',
+                         color_tint=self.pressed_color if ps_pressed else None)
+
         self.blit_scaled('voice_button_highlight', 'voice_button_highlight')
         self.blit_scaled('voice_button', 'voice_button')
         self.blit_scaled('icon_mute', 'icon_mute')
         self.blit_scaled('loudspeaker', 'loudspeaker')
 
-    def draw_controller_info(self):
-        """Draw controller connection status and input values"""
-        y_offset = 10
+        # Draw trigonometric circles AFTER all other elements
+        if self.left_joystick_center and self.left_stick_move_timer > 0:
+            self.draw_trigonometric_circle(self.left_joystick_center, self.left_stick_pos, True)
 
-        # Connection status
-        if self.controller_connected:
-            status_text = f"Controller: {self.joystick.get_name()}"
-            color = (0, 255, 0)
-        else:
-            status_text = "No Controller Connected (Press R to refresh)"
-            color = (255, 0, 0)
-
-        text_surface = self.font.render(status_text, True, color)
-        self.screen.blit(text_surface, (10, y_offset))
-        y_offset += 30
-
-        if not self.controller_connected:
-            return
-
-        # Display active buttons
-        active_buttons = [name for name, pressed in self.button_states.items() if pressed]
-        if active_buttons:
-            buttons_text = f"Active Buttons: {', '.join(active_buttons)}"
-            text_surface = self.small_font.render(buttons_text, True, (255, 255, 255))
-            self.screen.blit(text_surface, (10, y_offset))
-            y_offset += 25
-
-        # Display axis values
-        for axis_name, value in self.axis_values.items():
-            if abs(value) > 0.1:  # Only show significant values
-                axis_text = f"{axis_name}: {value:.2f}"
-                text_surface = self.small_font.render(axis_text, True, (255, 255, 255))
-                self.screen.blit(text_surface, (10, y_offset))
-                y_offset += 20
-
-        # Display trigger values as bars
-        l2_value = self.axis_values.get('l2', 0)
-        r2_value = self.axis_values.get('r2', 0)
-
-        if abs(l2_value) > 0.1:
-            self.draw_trigger_bar("L2", l2_value, 10, self.height - 60)
-        if abs(r2_value) > 0.1:
-            self.draw_trigger_bar("R2", r2_value, 10, self.height - 30)
-
-    def draw_trigger_bar(self, label, value, x, y):
-        """Draw trigger pressure as a progress bar"""
-        # Normalize value from [-1, 1] to [0, 1] for triggers
-        normalized_value = (value + 1) / 2
-
-        bar_width = 200
-        bar_height = 20
-
-        # Background
-        pygame.draw.rect(self.screen, (50, 50, 50), (x + 30, y, bar_width, bar_height))
-        # Fill
-        fill_width = int(bar_width * normalized_value)
-        pygame.draw.rect(self.screen, (0, 255, 0), (x + 30, y, fill_width, bar_height))
-        # Border
-        pygame.draw.rect(self.screen, (255, 255, 255), (x + 30, y, bar_width, bar_height), 2)
-
-        # Label
-        label_surface = self.small_font.render(f"{label}:", True, (255, 255, 255))
-        self.screen.blit(label_surface, (x, y + 3))
+        if self.right_joystick_center and self.right_stick_move_timer > 0:
+            self.draw_trigonometric_circle(self.right_joystick_center, self.right_stick_pos, False)
 
     def handle_resize(self, new_width, new_height):
         """Handle window resize"""
         self.width = new_width
         self.height = new_height
-        self.scale_x = new_width / self.base_width
-        self.scale_y = new_height / self.base_height
+        self.scale_x = (new_width / self.base_width) * self.controller_scale
+        self.scale_y = (new_height / self.base_height) * self.controller_scale
         self.screen = pygame.display.set_mode((new_width, new_height))
+
+        # Recalculate controller offset for centering
+        self.controller_offset_x = (new_width - (self.base_width * self.scale_x)) // 2
+        self.controller_offset_y = (new_height - (self.base_height * self.scale_y)) // 2
 
     def run(self):
         """Main game loop"""
@@ -444,24 +570,15 @@ class PS5ControllerTester:
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_r:  # Press R to refresh controller
                         self.check_controller()
-                elif event.type == pygame.JOYBUTTONDOWN:
-                    print(f"Button {event.button} pressed")
-                elif event.type == pygame.JOYBUTTONUP:
-                    print(f"Button {event.button} released")
-                elif event.type == pygame.JOYAXISMOTION:
-                    print(f"Axis {event.axis}: {event.value:.2f}")
 
             # Update controller input
             self.update_controller_input()
 
-            # Clear screen
-            self.screen.fill(GRAY)
+            # Clear screen with a darker background for better contrast
+            self.screen.fill((20, 20, 30))  # Dark blue background
 
             # Draw controller
             self.draw_controller()
-
-            # Draw info overlay
-            self.draw_controller_info()
 
             # Update display
             pygame.display.flip()
@@ -476,6 +593,6 @@ class PS5ControllerTester:
 
 # Usage
 if __name__ == "__main__":
-    # Initialize controller tester
+    # Initialize controller tester with improved UI
     tester = PS5ControllerTester(1000, 664)
     tester.run()
