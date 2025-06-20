@@ -3,6 +3,9 @@ import sys
 import math
 from Client.client import RemoteClient
 import time
+import threading
+import queue
+
 class PS5ControllerTester:
     def __init__(self, width=1000, height=664):
         pygame.init()
@@ -72,8 +75,16 @@ class PS5ControllerTester:
 
         # Initialize RemoteClient
         self.remote_client = RemoteClient()
-        self.last_send_time = 0
-        self.send_interval = 0.1 # Send data every 0.1 seconds
+        self.controller_data_queue = queue.Queue()
+        self.running = True
+        self.send_thread = threading.Thread(target=self._send_data_thread_func)
+        self.send_thread.daemon = True
+        self.send_thread.start()
+
+        # Lưu trữ trạng thái cũ để phát hiện thay đổi
+        self.prev_button_states = {}
+        self.prev_axis_values = {}
+        self.prev_hat_values = {}
 
         # Calculate controller offset to center it
         self.controller_offset_x = (width - (self.base_width * self.controller_scale)) // 2
@@ -247,16 +258,21 @@ class PS5ControllerTester:
             prev_left_stick = self.left_stick_pos.copy()
             prev_right_stick = self.right_stick_pos.copy()
 
+            # Tạo các biến tạm thời để lưu trạng thái mới
+            current_button_states = {}
+            current_axis_values = {}
+            current_hat_values = {}
+
             # Update button states
             for i in range(self.joystick.get_numbuttons()):
                 button_name = self.button_mapping.get(i, f'button_{i}')
-                self.button_states[button_name] = self.joystick.get_button(i)
+                current_button_states[button_name] = self.joystick.get_button(i)
 
             # Update axis values
             for i in range(self.joystick.get_numaxes()):
                 axis_name = self.axis_mapping.get(i, f'axis_{i}')
                 value = self.joystick.get_axis(i)
-                self.axis_values[axis_name] = value
+                current_axis_values[axis_name] = value
 
                 # Update joystick positions
                 if axis_name == 'left_stick_x':
@@ -283,7 +299,30 @@ class PS5ControllerTester:
 
             # Update hat (D-pad) values
             for i in range(self.joystick.get_numhats()):
-                self.hat_values[f'hat_{i}'] = self.joystick.get_hat(i)
+                current_hat_values[f'hat_{i}'] = self.joystick.get_hat(i)
+
+            # So sánh trạng thái hiện tại với trạng thái trước đó
+            # Chỉ gửi dữ liệu nếu có thay đổi
+            if (current_button_states != self.prev_button_states or
+                    current_axis_values != self.prev_axis_values or
+                    current_hat_values != self.prev_hat_values):
+
+                # Cập nhật trạng thái chính của controller
+                self.button_states = current_button_states
+                self.axis_values = current_axis_values
+                self.hat_values = current_hat_values
+
+                # Đặt dữ liệu vào queue để gửi đi trong luồng khác
+                self.controller_data_queue.put((
+                    self.button_states,
+                    self.axis_values,
+                    self.hat_values
+                ))
+
+                # Cập nhật trạng thái trước đó để so sánh trong lần tiếp theo
+                self.prev_button_states = current_button_states.copy()
+                self.prev_axis_values = current_axis_values.copy()
+                self.prev_hat_values = current_hat_values.copy()
 
         except pygame.error as e:
             print(f"Controller error: {e}")
@@ -599,8 +638,8 @@ class PS5ControllerTester:
         self.scale_y = (new_height / self.base_height) * self.controller_scale
         self.screen = pygame.display.set_mode((new_width, new_height))
 
-        self.controller_offset_x = (new_width - (self.base_width * self.scale_x)) // 2
-        self.controller_offset_y = (new_height - (self.base_height * self.scale_y)) // 2
+        self.controller_offset_x = (new_width - (self.base_width * self.controller_scale)) // 2
+        self.controller_offset_y = (new_height - (self.base_height * self.controller_scale)) // 2
 
     def run(self):
         """Main game loop with robust error handling"""
@@ -632,16 +671,6 @@ class PS5ControllerTester:
                 if self.controller_connected:
                     self.update_controller_input()
 
-                    # Send controller data to server
-                    current_time = time.time()
-                    if current_time - self.last_send_time >= self.send_interval:
-                        self.remote_client.send_controller_data(
-                            self.button_states,
-                            self.axis_values,
-                            self.hat_values
-                        )
-                        self.last_send_time = current_time
-
             except Exception as e:
                 print(f"Error updating controller: {e}")
                 self.controller_connected = False
@@ -664,10 +693,22 @@ class PS5ControllerTester:
             self.clock.tick(60)
 
         # Cleanup
+        self.running = False # Dừng luồng gửi dữ liệu
+        self.send_thread.join() # Chờ luồng gửi dữ liệu kết thúc
+
         if self.joystick:
             self.joystick.quit()
         pygame.quit()
         sys.exit()
+
+    def _send_data_thread_func(self):
+        while self.running:
+            try:
+                if not self.controller_data_queue.empty():
+                    data = self.controller_data_queue.get()
+                    self.remote_client.send_controller_data(*data)
+            except Exception as e:
+                print(f"Error sending data: {e}")
 
 
 if __name__ == "__main__":
