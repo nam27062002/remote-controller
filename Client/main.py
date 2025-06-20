@@ -1,7 +1,8 @@
 ﻿import pygame
 import sys
 import math
-
+from Client.client import RemoteClient
+import time
 class PS5ControllerTester:
     def __init__(self, width=1000, height=664):
         pygame.init()
@@ -68,6 +69,11 @@ class PS5ControllerTester:
         self.small_font = pygame.font.Font(None, 18)
 
         self.clock = pygame.time.Clock()
+
+        # Initialize RemoteClient
+        self.remote_client = RemoteClient()
+        self.last_send_time = 0
+        self.send_interval = 0.1 # Send data every 0.1 seconds
 
         # Calculate controller offset to center it
         self.controller_offset_x = (width - (self.base_width * self.controller_scale)) // 2
