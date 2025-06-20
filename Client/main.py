@@ -631,6 +631,17 @@ class PS5ControllerTester:
             try:
                 if self.controller_connected:
                     self.update_controller_input()
+
+                    # Send controller data to server
+                    current_time = time.time()
+                    if current_time - self.last_send_time >= self.send_interval:
+                        self.remote_client.send_controller_data(
+                            self.button_states,
+                            self.axis_values,
+                            self.hat_values
+                        )
+                        self.last_send_time = current_time
+
             except Exception as e:
                 print(f"Error updating controller: {e}")
                 self.controller_connected = False
